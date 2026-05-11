@@ -65,6 +65,7 @@ def build_history_table(trades):
         reason = t.get("reason", "")
         reason_label = {
             "slope_buy": "기울기 매수",
+            "dca_buy": "분산 매수",
             "deadline_buy": "데드라인 매수",
             "profit_sell": "수익률 매도",
         }.get(reason, reason)

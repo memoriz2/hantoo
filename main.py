@@ -20,11 +20,13 @@ PRICE_CHECK_INTERVAL = 5       # 가격 체크 간격 (분)
 SLOPE_WINDOW = 6               # 기울기 계산용 데이터 수 (6개 = 30분)
 SLOPE_THRESHOLD = -0.05        # 이 이하면 하락 추세로 판단 (%/분)
 DEADLINE_HOUR = 14             # 이 시각까지 목표 미달 시 나머지 일괄 매수
+DCA_START_MINUTE = 30          # 장 시작 후 30분(09:30)부터 분산매수 시작
 LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
 
 # 가격 히스토리 (기울기 계산용)
 price_history = []
 today_bought = 0  # 오늘 매수한 수량
+last_dca_time = None  # 마지막 분산매수 시각
 
 
 def now():
@@ -221,9 +223,37 @@ def sold_today():
     )
 
 
-def try_slope_buy():
-    """기울기 확인 후 1주 분할 매수 시도"""
+def get_dca_interval(target):
+    """목표 수량에 따른 분산매수 간격(분) 계산 (09:30~14:00)"""
+    available_minutes = (DEADLINE_HOUR * 60) - (9 * 60 + DCA_START_MINUTE)
+    return available_minutes / target
+
+
+def do_buy(qty, price, slope, reason):
+    """매수 실행 + 로그 기록"""
     global today_bought
+    result = buy_stock(qty)
+    if result["rt_cd"] == "0":
+        today_bought += qty
+        log = load_log()
+        log["trades"].append({
+            "time": now(),
+            "type": "buy",
+            "stock": STOCK_NAME,
+            "qty": qty,
+            "price": price,
+            "slope": round(slope, 6) if slope else None,
+            "reason": reason,
+            "today_total": today_bought,
+        })
+        save_log(log)
+        return True
+    return False
+
+
+def try_buy():
+    """시간 분산 매수(DCA) + 기울기 추가 매수 + 데드라인 안전망"""
+    global today_bought, last_dca_time
 
     if not is_market_open():
         return
@@ -248,49 +278,40 @@ def try_slope_buy():
     # 기울기 계산
     slope = calc_slope()
     n = datetime.now()
+    minutes_since_open = n.hour * 60 + n.minute - (9 * 60)
+    dca_active = minutes_since_open >= DCA_START_MINUTE
 
     if slope is not None:
         print(f"[{now()}] 현재가: {price:,}원 | 기울기: {slope:+.4f}%/분 | 매수: {today_bought}/{target}주")
-
-        if slope <= SLOPE_THRESHOLD:
-            # 하락 감지 → 1주 매수
-            print(f"[{now()}] 하락 감지! 1주 분할 매수")
-            result = buy_stock(1)
-            if result["rt_cd"] == "0":
-                today_bought += 1
-                log = load_log()
-                log["trades"].append({
-                    "time": now(),
-                    "type": "buy",
-                    "stock": STOCK_NAME,
-                    "qty": 1,
-                    "price": price,
-                    "slope": round(slope, 6),
-                    "reason": "slope_buy",
-                    "today_total": today_bought,
-                })
-                save_log(log)
     else:
         print(f"[{now()}] 현재가: {price:,}원 | 기울기: 데이터 수집중 ({len(price_history)}/{SLOPE_WINDOW}) | 매수: {today_bought}/{target}주")
 
-    # 데드라인 체크: 14시 넘었는데 목표 미달이면 나머지 일괄 매수
+    bought_this_cycle = False
+
+    # 1. 기울기 매수: 하락 감지 시 추가 1주 매수
+    if slope is not None and slope <= SLOPE_THRESHOLD and remaining > 0:
+        print(f"[{now()}] 하락 감지! 기울기 매수 1주")
+        if do_buy(1, price, slope, "slope_buy"):
+            remaining -= 1
+            bought_this_cycle = True
+            last_dca_time = n
+
+    # 2. 시간 분산 매수(DCA): 일정 간격마다 1주씩
+    if not bought_this_cycle and dca_active and remaining > 0:
+        interval = get_dca_interval(target)
+        should_buy = (last_dca_time is None) or \
+                     (n - last_dca_time).total_seconds() / 60 >= interval
+        if should_buy:
+            print(f"[{now()}] 시간 분산 매수 1주 (간격: {interval:.0f}분)")
+            if do_buy(1, price, slope, "dca_buy"):
+                remaining -= 1
+                bought_this_cycle = True
+                last_dca_time = n
+
+    # 3. 데드라인: 14시 넘었는데 목표 미달이면 나머지 일괄 매수
     if n.hour >= DEADLINE_HOUR and remaining > 0:
         print(f"[{now()}] 데드라인 도달! 나머지 {remaining}주 일괄 매수")
-        result = buy_stock(remaining)
-        if result["rt_cd"] == "0":
-            today_bought += remaining
-            log = load_log()
-            log["trades"].append({
-                "time": now(),
-                "type": "buy",
-                "stock": STOCK_NAME,
-                "qty": remaining,
-                "price": price,
-                "slope": round(slope, 6) if slope else None,
-                "reason": "deadline_buy",
-                "today_total": today_bought,
-            })
-            save_log(log)
+        do_buy(remaining, price, slope, "deadline_buy")
 
 
 def check_sell():
@@ -333,9 +354,10 @@ def check_sell():
 
 def reset_daily():
     """매일 장 시작 전 초기화"""
-    global today_bought
+    global today_bought, last_dca_time
     price_history.clear()
     today_bought = 0
+    last_dca_time = None
     print(f"\n[{now()}] === 새로운 거래일 시작 ===")
 
 
@@ -345,18 +367,18 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"  모드: {'실전투자' if MODE == 'real' else '모의투자'}")
     print(f"  종목: {STOCK_NAME} ({STOCK_CODE})")
-    print(f"  매수: 기울기 하락 시 1주씩 분할매수")
+    print(f"  매수: 시간분산(DCA) + 기울기 하락 시 추가매수")
     print(f"  하루 목표: {DAILY_TARGET_QTY}주 (예수금 {CASH_THRESHOLD/10000:.0f}만원 이상: {DAILY_TARGET_QTY_HIGH}주)")
     print(f"  매도: 수익률 {SELL_PROFIT_RATE}% 이상 시 절반 매도")
-    print(f"  데드라인: {DEADLINE_HOUR}시까지 미달 시 나머지 일괄 매수")
+    print(f"  DCA 시작: 09:{DCA_START_MINUTE:02d} | 데드라인: {DEADLINE_HOUR}시")
     print(f"  체크 간격: {PRICE_CHECK_INTERVAL}분")
     print("=" * 50)
 
     # 매일 08:55에 초기화
     schedule.every().day.at("08:55").do(reset_daily)
 
-    # 5분마다 기울기 매수 체크
-    schedule.every(PRICE_CHECK_INTERVAL).minutes.do(try_slope_buy)
+    # 5분마다 매수 체크 (DCA + 기울기)
+    schedule.every(PRICE_CHECK_INTERVAL).minutes.do(try_buy)
 
     # 5분마다 매도 체크
     schedule.every(PRICE_CHECK_INTERVAL).minutes.do(check_sell)
@@ -367,7 +389,7 @@ if __name__ == "__main__":
     # 시작 시 바로 한번 실행
     if is_market_open():
         reset_daily()
-        try_slope_buy()
+        try_buy()
         check_sell()
 
     while True:
