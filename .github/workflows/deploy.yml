@@ -41,7 +41,9 @@ jobs:
 
             # 기존 프로세스 종료 후 재시작
             pkill -f "python3 main.py" || true
+            pkill -f "python3 dashboard.py" || true
             sleep 2
-            nohup python3 main.py > ~/hantoo/output.log 2>&1 &
-            echo "Deploy complete! PID: $(pgrep -f 'python3 main.py')"
+            nohup python3 -u main.py > ~/hantoo/output.log 2>&1 &
+            nohup python3 -u dashboard.py > ~/hantoo/dashboard.log 2>&1 &
+            echo "Deploy complete! main PID: $(pgrep -f 'python3 -u main.py') | dashboard PID: $(pgrep -f 'python3 -u dashboard.py')"
           ENDSSH
