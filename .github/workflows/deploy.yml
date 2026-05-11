@@ -1,0 +1,47 @@
+name: Deploy to GCP
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCP_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.GCP_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to VM
+        run: |
+          ssh ${{ secrets.GCP_USER }}@${{ secrets.GCP_HOST }} << 'ENDSSH'
+            # 프로젝트 클론 또는 풀
+            if [ -d ~/hantoo ]; then
+              cd ~/hantoo && git pull origin main
+            else
+              git clone https://github.com/memoriz2/hantoo.git ~/hantoo
+            fi
+
+            # 의존성 설치
+            cd ~/hantoo
+            pip3 install -r requirements.txt
+
+            # .env 파일 생성
+            cat > .env << 'ENVEOF'
+          APP_KEY=${{ secrets.APP_KEY }}
+          APP_SECRET=${{ secrets.APP_SECRET }}
+          ACCOUNT_NO=${{ secrets.ACCOUNT_NO }}
+          MODE=real
+          ENVEOF
+
+            # 기존 프로세스 종료 후 재시작
+            pkill -f "python3 main.py" || true
+            sleep 2
+            nohup python3 main.py > ~/hantoo/output.log 2>&1 &
+            echo "Deploy complete! PID: $(pgrep -f 'python3 main.py')"
+          ENDSSH
