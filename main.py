@@ -55,42 +55,49 @@ def save_log(log):
 
 def get_current_price():
     """KODEX 200 현재가 조회"""
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
-    headers = get_headers("FHKST01010100")
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": STOCK_CODE,
-    }
-    res = requests.get(url, headers=headers, params=params)
-    res.raise_for_status()
-    data = res.json()
-    if data["rt_cd"] == "0":
-        return int(data["output"]["stck_prpr"])
-    print(f"[{now()}] 현재가 조회 실패: {data.get('msg1')}")
+    try:
+        url = f"{BASE_URL}/uapi/domestic-stock/v1/quotations/inquire-price"
+        headers = get_headers("FHKST01010100")
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": STOCK_CODE,
+        }
+        res = requests.get(url, headers=headers, params=params)
+        res.raise_for_status()
+        data = res.json()
+        if data["rt_cd"] == "0":
+            return int(data["output"]["stck_prpr"])
+        print(f"[{now()}] 현재가 조회 실패: {data.get('msg1')}")
+    except Exception as e:
+        print(f"[{now()}] 현재가 조회 에러: {e}")
     return None
 
 
 def get_balance():
     """계좌 잔고 조회 (예수금, 보유종목)"""
-    url = f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance"
-    tr_id = "TTTC8434R" if MODE == "real" else "VTTC8434R"
-    headers = get_headers(tr_id)
-    params = {
-        "CANO": ACCOUNT_NO,
-        "ACNT_PRDT_CD": "01",
-        "AFHR_FLPR_YN": "N",
-        "OFL_YN": "",
-        "INQR_DVSN": "02",
-        "UNPR_DVSN": "01",
-        "FUND_STTL_ICLD_YN": "N",
-        "FNCG_AMT_AUTO_RDPT_YN": "N",
-        "PRCS_DVSN": "01",
-        "CTX_AREA_FK100": "",
-        "CTX_AREA_NK100": "",
-    }
-    res = requests.get(url, headers=headers, params=params)
-    res.raise_for_status()
-    return res.json()
+    try:
+        url = f"{BASE_URL}/uapi/domestic-stock/v1/trading/inquire-balance"
+        tr_id = "TTTC8434R" if MODE == "real" else "VTTC8434R"
+        headers = get_headers(tr_id)
+        params = {
+            "CANO": ACCOUNT_NO,
+            "ACNT_PRDT_CD": "01",
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        res = requests.get(url, headers=headers, params=params)
+        res.raise_for_status()
+        return res.json()
+    except Exception as e:
+        print(f"[{now()}] 잔고 조회 에러: {e}")
+        return {"rt_cd": "-1", "msg1": str(e), "output1": [], "output2": [{"dnca_tot_amt": "0"}]}
 
 
 def get_cash_balance():
@@ -129,14 +136,18 @@ def buy_stock(qty):
         "ORD_QTY": str(qty),
         "ORD_UNPR": "0",
     }
-    res = requests.post(url, headers=headers, json=body)
-    res.raise_for_status()
-    data = res.json()
-    if data["rt_cd"] == "0":
-        print(f"[{now()}] 매수 성공: {STOCK_NAME} {qty}주")
-    else:
-        print(f"[{now()}] 매수 실패: {data.get('msg1')}")
-    return data
+    try:
+        res = requests.post(url, headers=headers, json=body)
+        res.raise_for_status()
+        data = res.json()
+        if data["rt_cd"] == "0":
+            print(f"[{now()}] 매수 성공: {STOCK_NAME} {qty}주")
+        else:
+            print(f"[{now()}] 매수 실패: {data.get('msg1')}")
+        return data
+    except Exception as e:
+        print(f"[{now()}] 매수 주문 에러: {e}")
+        return {"rt_cd": "-1", "msg1": str(e)}
 
 
 def sell_stock(qty):
@@ -152,13 +163,17 @@ def sell_stock(qty):
         "ORD_QTY": str(qty),
         "ORD_UNPR": "0",
     }
-    res = requests.post(url, headers=headers, json=body)
-    res.raise_for_status()
-    data = res.json()
-    if data["rt_cd"] == "0":
-        print(f"[{now()}] 매도 성공: {STOCK_NAME} {qty}주")
-    else:
-        print(f"[{now()}] 매도 실패: {data.get('msg1')}")
+    try:
+        res = requests.post(url, headers=headers, json=body)
+        res.raise_for_status()
+        data = res.json()
+        if data["rt_cd"] == "0":
+            print(f"[{now()}] 매도 성공: {STOCK_NAME} {qty}주")
+        else:
+            print(f"[{now()}] 매도 실패: {data.get('msg1')}")
+    except Exception as e:
+        print(f"[{now()}] 매도 주문 에러: {e}")
+        data = {"rt_cd": "-1", "msg1": str(e)}
     return data
 
 
@@ -356,5 +371,8 @@ if __name__ == "__main__":
         check_sell()
 
     while True:
-        schedule.run_pending()
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            print(f"[{now()}] 스케줄러 에러 (계속 실행): {e}")
         time.sleep(30)
