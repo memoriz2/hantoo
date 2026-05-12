@@ -3,6 +3,7 @@ name: Deploy to GCP
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -39,11 +40,10 @@ jobs:
           MODE=real
           ENVEOF
 
-            # 기존 프로세스 종료 후 재시작
-            pkill -f "python3 main.py" || true
-            pkill -f "python3 dashboard.py" || true
+            # systemd 서비스 재시작
+            sudo systemctl restart hantoo-bot
+            sudo systemctl restart hantoo-dashboard
             sleep 2
-            nohup python3 -u main.py > ~/hantoo/output.log 2>&1 &
-            nohup python3 -u dashboard.py > ~/hantoo/dashboard.log 2>&1 &
-            echo "Deploy complete! main PID: $(pgrep -f 'python3 -u main.py') | dashboard PID: $(pgrep -f 'python3 -u dashboard.py')"
+            echo "Deploy complete!"
+            sudo systemctl is-active hantoo-bot hantoo-dashboard
           ENDSSH
