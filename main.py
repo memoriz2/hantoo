@@ -262,6 +262,25 @@ def sold_today():
     )
 
 
+def restore_last_buy_times():
+    """trade_log.json에서 오늘 마지막 매수 시간을 복원"""
+    global last_dca_time, last_slope_buy_time
+    log = load_log()
+    today_str = date.today().isoformat()
+    for t in reversed(log["trades"]):
+        if t.get("type") != "buy" or not t.get("time", "").startswith(today_str):
+            continue
+        buy_time = datetime.strptime(t["time"], "%Y-%m-%d %H:%M:%S")
+        if t.get("reason") == "slope_buy" and last_slope_buy_time is None:
+            last_slope_buy_time = buy_time
+        if last_dca_time is None:
+            last_dca_time = buy_time
+        if last_dca_time is not None and last_slope_buy_time is not None:
+            break
+    if last_dca_time or last_slope_buy_time:
+        print(f"[{now()}] 매수 시간 복원 — DCA: {last_dca_time}, 기울기: {last_slope_buy_time}")
+
+
 def get_dca_interval(target):
     """목표 수량에 따른 분산매수 간격(분) 계산 (09:30~14:00)"""
     available_minutes = (DEADLINE_HOUR * 60) - (9 * 60 + DCA_START_MINUTE)
@@ -417,8 +436,9 @@ if __name__ == "__main__":
     print(f"  체크 간격: {PRICE_CHECK_INTERVAL}분")
     print("=" * 50)
 
-    # 저장된 가격 히스토리 복원
+    # 저장된 상태 복원
     load_price_history()
+    restore_last_buy_times()
 
     # 매일 08:55에 초기화
     schedule.every().day.at("08:55").do(reset_daily)
