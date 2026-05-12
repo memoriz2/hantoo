@@ -292,7 +292,7 @@ def do_buy(qty, price, slope, reason):
 
 def try_buy():
     """시간 분산 매수(DCA) + 기울기 추가 매수 + 데드라인 안전망"""
-    global today_bought, last_dca_time
+    global today_bought, last_dca_time, last_slope_buy_time
 
     if not is_market_open():
         return
