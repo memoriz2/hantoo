@@ -1,0 +1,16 @@
+[Unit]
+Description=KODEX 200 자동매매 봇
+After=network.target
+
+[Service]
+Type=simple
+User=ahndjds
+WorkingDirectory=/home/ahndjds/hantoo
+ExecStart=/usr/bin/python3 -u main.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ahndjds/hantoo/output.log
+StandardError=append:/home/ahndjds/hantoo/error.log
+
+[Install]
+WantedBy=multi-user.target

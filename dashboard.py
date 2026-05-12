@@ -3,6 +3,7 @@ from flask import Flask
 import json
 import re
 import os
+import subprocess
 
 app = Flask(__name__)
 
@@ -102,13 +103,41 @@ def dashboard():
         return f"<h2>대시보드 오류</h2><pre>{e}</pre>", 500
 
 
+def get_bot_status():
+    """매수봇 프로세스 상태 확인"""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-af", "python3.*main.py"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def _render_dashboard():
+    bot_alive = get_bot_status()
     entries = parse_monitor_log()
     trade_log = load_trade_log()
     trades = trade_log.get("trades", [])
 
     # 최근 데이터
     latest = entries[-1] if entries else {}
+
+    # 봇 마지막 활동 시간 체크 (10분 이상 로그 없으면 경고)
+    from datetime import datetime, timedelta
+    last_log_time = latest.get("time")
+    bot_stale = False
+    if last_log_time:
+        try:
+            last_dt = datetime.strptime(last_log_time, "%Y-%m-%d %H:%M:%S")
+            bot_stale = datetime.now() - last_dt > timedelta(minutes=10)
+        except ValueError:
+            pass
+    if bot_stale:
+        bot_alive = False
 
     # 매수/매도 통계
     buys = [t for t in trades if t.get("type") == "buy"]
@@ -185,11 +214,15 @@ def _render_dashboard():
         .sell {{ color: #e94560; font-weight: bold; }}
         .section-title {{ font-size: 16px; color: #ccc; margin: 20px 0 10px; }}
         .mode {{ display: inline-block; background: #e94560; color: white; padding: 3px 10px; border-radius: 20px; font-size: 12px; }}
+        .bot-status {{ display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }}
+        .bot-status.alive {{ background: #00b894; color: white; }}
+        .bot-status.dead {{ background: #e94560; color: white; animation: blink 1s infinite; }}
+        @keyframes blink {{ 50% {{ opacity: 0.5; }} }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>KODEX 200 자동매매 <span class="mode">실전</span></h1>
+        <h1>KODEX 200 자동매매 <span class="mode">실전</span> <span class="bot-status {'alive' if bot_alive else 'dead'}">{'봇 정상' if bot_alive else '봇 중단!'}</span></h1>
         <div class="sub">마지막 업데이트: {latest.get("time", "-")} | 60초마다 자동 새로고침</div>
     </div>
 
