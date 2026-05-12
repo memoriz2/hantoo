@@ -5,7 +5,7 @@ import time
 import numpy as np
 import requests
 import schedule
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from config import BASE_URL, ACCOUNT_NO, MODE
 from auth import get_headers
 
@@ -22,6 +22,7 @@ SLOPE_THRESHOLD = -0.05        # 이 이하면 하락 추세로 판단 (%/분)
 DEADLINE_HOUR = 14             # 이 시각까지 목표 미달 시 나머지 일괄 매수
 DCA_START_MINUTE = 30          # 장 시작 후 30분(09:30)부터 분산매수 시작
 LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
+PRICE_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "price_history.json")
 
 # 가격 히스토리 (기울기 계산용)
 price_history = []
@@ -31,6 +32,42 @@ last_dca_time = None  # 마지막 분산매수 시각
 
 def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def load_price_history():
+    """저장된 가격 히스토리 로드 (3일치만 유지)"""
+    global price_history
+    if not os.path.exists(PRICE_HISTORY_FILE):
+        return
+    try:
+        with open(PRICE_HISTORY_FILE, "r") as f:
+            data = json.load(f)
+        # 3일 이내 데이터만 유지
+        cutoff = (datetime.now() - timedelta(days=3)).isoformat()
+        data = [d for d in data if d["time"] >= cutoff]
+        price_history = [d["price"] for d in data]
+        print(f"[{now()}] 가격 히스토리 복원: {len(price_history)}개")
+    except (json.JSONDecodeError, ValueError, KeyError):
+        price_history = []
+
+
+def save_price_history():
+    """가격 히스토리를 JSON으로 저장"""
+    try:
+        # 기존 데이터 로드
+        existing = []
+        if os.path.exists(PRICE_HISTORY_FILE):
+            with open(PRICE_HISTORY_FILE, "r") as f:
+                existing = json.load(f)
+        # 3일 이내만 유지
+        cutoff = (datetime.now() - timedelta(days=3)).isoformat()
+        existing = [d for d in existing if d["time"] >= cutoff]
+        # 새 데이터 추가
+        existing.append({"time": now(), "price": price_history[-1]})
+        with open(PRICE_HISTORY_FILE, "w") as f:
+            json.dump(existing, f)
+    except Exception as e:
+        print(f"[{now()}] 가격 히스토리 저장 에러: {e}")
 
 
 def is_market_open():
@@ -265,6 +302,7 @@ def try_buy():
     price_history.append(price)
     if len(price_history) > 100:
         del price_history[:len(price_history) - 100]
+    save_price_history()
 
     # 오늘 매수 현황
     today_bought = bought_today_count()
@@ -353,9 +391,8 @@ def check_sell():
 
 
 def reset_daily():
-    """매일 장 시작 전 초기화"""
+    """매일 장 시작 전 초기화 (가격 히스토리는 유지)"""
     global today_bought, last_dca_time
-    price_history.clear()
     today_bought = 0
     last_dca_time = None
     print(f"\n[{now()}] === 새로운 거래일 시작 ===")
@@ -373,6 +410,9 @@ if __name__ == "__main__":
     print(f"  DCA 시작: 09:{DCA_START_MINUTE:02d} | 데드라인: {DEADLINE_HOUR}시")
     print(f"  체크 간격: {PRICE_CHECK_INTERVAL}분")
     print("=" * 50)
+
+    # 저장된 가격 히스토리 복원
+    load_price_history()
 
     # 매일 08:55에 초기화
     schedule.every().day.at("08:55").do(reset_daily)
