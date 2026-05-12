@@ -1,0 +1,16 @@
+[Unit]
+Description=KODEX 200 대시보드
+After=network.target
+
+[Service]
+Type=simple
+User=ahndjds
+WorkingDirectory=/home/ahndjds/hantoo
+ExecStart=/usr/bin/python3 -u dashboard.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ahndjds/hantoo/dashboard.log
+StandardError=append:/home/ahndjds/hantoo/dashboard.log
+
+[Install]
+WantedBy=multi-user.target
