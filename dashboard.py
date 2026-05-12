@@ -43,14 +43,30 @@ def parse_monitor_log():
                     "bought": int(p.group(4)),
                     "target": int(p.group(5)),
                 })
+            # 데이터 수집중 로그
+            c = re.search(
+                r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] 현재가: ([\d,]+)원 \| 기울기: 데이터 수집중 \((\d+)/(\d+)\) \| 매수: (\d+)/(\d+)주',
+                line
+            )
+            if c:
+                entries.append({
+                    "time": c.group(1),
+                    "current_price": int(c.group(2).replace(",", "")),
+                    "collecting": f"{c.group(3)}/{c.group(4)}",
+                    "bought": int(c.group(5)),
+                    "target": int(c.group(6)),
+                })
     return entries
 
 
 def load_trade_log():
     if not os.path.exists(TRADE_LOG_FILE):
         return {"trades": []}
-    with open(TRADE_LOG_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(TRADE_LOG_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, ValueError):
+        return {"trades": []}
 
 
 def build_history_table(trades):
@@ -80,6 +96,13 @@ def build_history_table(trades):
 
 @app.route("/")
 def dashboard():
+    try:
+        return _render_dashboard()
+    except Exception as e:
+        return f"<h2>대시보드 오류</h2><pre>{e}</pre>", 500
+
+
+def _render_dashboard():
     entries = parse_monitor_log()
     trade_log = load_trade_log()
     trades = trade_log.get("trades", [])
@@ -111,10 +134,13 @@ def dashboard():
 
     current_price = latest.get("current_price", 0)
     profit_rate = latest.get("profit_rate", 0)
+    collecting = latest.get("collecting", None)
     slope = latest.get("slope", None)
     slope_str = f'{slope:+.4f}%/분' if slope is not None else "수집중"
 
-    if slope is not None:
+    if collecting:
+        trend = f"수집중 ({collecting})"
+    elif slope is not None:
         if slope <= -0.1:
             trend = "하락 ↓↓"
         elif slope <= -0.05:
