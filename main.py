@@ -21,6 +21,7 @@ SLOPE_WINDOW = 6               # 기울기 계산용 데이터 수 (6개 = 30분
 SLOPE_THRESHOLD = -0.05        # 이 이하면 하락 추세로 판단 (%/분)
 DEADLINE_HOUR = 14             # 이 시각까지 목표 미달 시 나머지 일괄 매수
 DCA_START_MINUTE = 30          # 장 시작 후 30분(09:30)부터 분산매수 시작
+SLOPE_BUY_COOLDOWN = 20        # 기울기 매수 후 최소 대기 시간 (분)
 LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
 PRICE_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "price_history.json")
 
@@ -28,6 +29,7 @@ PRICE_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "price_history.json
 price_history = []
 today_bought = 0  # 오늘 매수한 수량
 last_dca_time = None  # 마지막 분산매수 시각
+last_slope_buy_time = None  # 마지막 기울기 매수 시각
 
 
 def now():
@@ -326,13 +328,16 @@ def try_buy():
 
     bought_this_cycle = False
 
-    # 1. 기울기 매수: 하락 감지 시 추가 1주 매수
-    if slope is not None and slope <= SLOPE_THRESHOLD and remaining > 0:
+    # 1. 기울기 매수: 하락 감지 시 추가 1주 매수 (쿨다운 20분)
+    slope_cooldown_ok = (last_slope_buy_time is None) or \
+                        (n - last_slope_buy_time).total_seconds() / 60 >= SLOPE_BUY_COOLDOWN
+    if slope is not None and slope <= SLOPE_THRESHOLD and remaining > 0 and slope_cooldown_ok:
         print(f"[{now()}] 하락 감지! 기울기 매수 1주")
         if do_buy(1, price, slope, "slope_buy"):
             remaining -= 1
             bought_this_cycle = True
             last_dca_time = n
+            last_slope_buy_time = n
 
     # 2. 시간 분산 매수(DCA): 일정 간격마다 1주씩
     if not bought_this_cycle and dca_active and remaining > 0:
@@ -392,9 +397,10 @@ def check_sell():
 
 def reset_daily():
     """매일 장 시작 전 초기화 (가격 히스토리는 유지)"""
-    global today_bought, last_dca_time
+    global today_bought, last_dca_time, last_slope_buy_time
     today_bought = 0
     last_dca_time = None
+    last_slope_buy_time = None
     print(f"\n[{now()}] === 새로운 거래일 시작 ===")
 
 
