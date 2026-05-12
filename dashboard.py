@@ -104,15 +104,13 @@ def dashboard():
 
 
 def get_bot_status():
-    """매수봇 프로세스 상태 확인"""
+    """매수봇 프로세스 상태 확인 (systemd 서비스)"""
     try:
         result = subprocess.run(
-            ["pgrep", "-af", "python3.*main.py"],
+            ["systemctl", "is-active", "hantoo-bot"],
             capture_output=True, text=True, timeout=5
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return True
-        return False
+        return result.stdout.strip() == "active"
     except Exception:
         return False
 
@@ -162,7 +160,9 @@ def _render_dashboard():
     slopes = [e["slope"] for e in slope_entries]
 
     current_price = latest.get("current_price", 0)
-    profit_rate = latest.get("profit_rate", 0)
+    # 수익률은 매도 모니터링 로그에서 가져옴
+    monitor_entries = [e for e in entries if "profit_rate" in e]
+    profit_rate = monitor_entries[-1]["profit_rate"] if monitor_entries else 0
     collecting = latest.get("collecting", None)
     slope = latest.get("slope", None)
     slope_str = f'{slope:+.4f}%/분' if slope is not None else "수집중"
