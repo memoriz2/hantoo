@@ -103,7 +103,7 @@ def get_current_price():
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": STOCK_CODE,
         }
-        res = requests.get(url, headers=headers, params=params)
+        res = requests.get(url, headers=headers, params=params, timeout=10)
         res.raise_for_status()
         data = res.json()
         if data["rt_cd"] == "0":
@@ -133,7 +133,7 @@ def get_balance():
             "CTX_AREA_FK100": "",
             "CTX_AREA_NK100": "",
         }
-        res = requests.get(url, headers=headers, params=params)
+        res = requests.get(url, headers=headers, params=params, timeout=10)
         res.raise_for_status()
         return res.json()
     except Exception as e:
@@ -178,7 +178,7 @@ def buy_stock(qty):
         "ORD_UNPR": "0",
     }
     try:
-        res = requests.post(url, headers=headers, json=body)
+        res = requests.post(url, headers=headers, json=body, timeout=10)
         res.raise_for_status()
         data = res.json()
         if data["rt_cd"] == "0":
@@ -205,7 +205,7 @@ def sell_stock(qty):
         "ORD_UNPR": "0",
     }
     try:
-        res = requests.post(url, headers=headers, json=body)
+        res = requests.post(url, headers=headers, json=body, timeout=10)
         res.raise_for_status()
         data = res.json()
         if data["rt_cd"] == "0":
@@ -454,9 +454,12 @@ if __name__ == "__main__":
 
     # 시작 시 바로 한번 실행
     if is_market_open():
-        reset_daily()
-        try_buy()
-        check_sell()
+        try:
+            reset_daily()
+            try_buy()
+            check_sell()
+        except Exception as e:
+            print(f"[{now()}] 시작 시 에러 (무시하고 스케줄러 진입): {e}")
 
     while True:
         try:

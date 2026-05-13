@@ -5,7 +5,7 @@ import requests
 from config import APP_KEY, APP_SECRET, BASE_URL
 
 
-TOKEN_FILE = "token.json"
+TOKEN_FILE = os.path.join(os.path.dirname(__file__), "token.json")
 
 
 def _load_cached_token():
@@ -30,7 +30,7 @@ def _save_token(access_token, expires_in):
 
 
 def get_access_token():
-    """접근토큰 발급 (캐시 우선)"""
+    """접근토큰 발급 (캐시 우선, 실패 시 재시도)"""
     cached = _load_cached_token()
     if cached:
         return cached
@@ -41,16 +41,21 @@ def get_access_token():
         "appkey": APP_KEY,
         "appsecret": APP_SECRET,
     }
-    res = requests.post(url, json=body)
-    res.raise_for_status()
-    data = res.json()
-
-    access_token = data["access_token"]
-    expires_in = data.get("expires_in", 86400)
-    _save_token(access_token, expires_in)
-
-    print("새 접근토큰 발급 완료")
-    return access_token
+    for attempt in range(3):
+        try:
+            res = requests.post(url, json=body, timeout=10)
+            res.raise_for_status()
+            data = res.json()
+            access_token = data["access_token"]
+            expires_in = data.get("expires_in", 86400)
+            _save_token(access_token, expires_in)
+            print("새 접근토큰 발급 완료")
+            return access_token
+        except Exception as e:
+            print(f"토큰 발급 실패 (시도 {attempt + 1}/3): {e}")
+            if attempt < 2:
+                time.sleep(5)
+    raise RuntimeError("토큰 발급 3회 실패")
 
 
 def get_headers(tr_id):
