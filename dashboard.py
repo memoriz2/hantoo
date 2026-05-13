@@ -103,20 +103,37 @@ def dashboard():
         return f"<h2>대시보드 오류</h2><pre>{e}</pre>", 500
 
 
+def is_market_hours():
+    """현재 장 운영 시간인지 확인 (09:00~15:20, 평일)"""
+    from datetime import datetime
+    n = datetime.now()
+    if n.weekday() >= 5:
+        return False
+    market_open = n.replace(hour=9, minute=0, second=0)
+    market_close = n.replace(hour=15, minute=20, second=0)
+    return market_open <= n <= market_close
+
+
 def get_bot_status():
-    """매수봇 프로세스 상태 확인 (systemd 서비스)"""
+    """매수봇 프로세스 상태 확인 (systemd 서비스)
+    Returns: 'alive', 'closed', 'dead'
+    """
     try:
         result = subprocess.run(
             ["systemctl", "is-active", "hantoo-bot"],
             capture_output=True, text=True, timeout=5
         )
-        return result.stdout.strip() == "active"
+        process_alive = result.stdout.strip() == "active"
     except Exception:
-        return False
+        process_alive = False
+
+    if not is_market_hours():
+        return "closed"
+    return "alive" if process_alive else "dead"
 
 
 def _render_dashboard():
-    bot_alive = get_bot_status()
+    bot_status = get_bot_status()  # 'alive', 'closed', 'dead'
     entries = parse_monitor_log()
     trade_log = load_trade_log()
     trades = trade_log.get("trades", [])
@@ -134,8 +151,8 @@ def _render_dashboard():
             bot_stale = datetime.now() - last_dt > timedelta(minutes=10)
         except ValueError:
             pass
-    if bot_stale:
-        bot_alive = False
+    if bot_stale and bot_status == "alive":
+        bot_status = "dead"
 
     # 매수/매도 통계
     buys = [t for t in trades if t.get("type") == "buy"]
@@ -216,13 +233,14 @@ def _render_dashboard():
         .mode {{ display: inline-block; background: #e94560; color: white; padding: 3px 10px; border-radius: 20px; font-size: 12px; }}
         .bot-status {{ display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }}
         .bot-status.alive {{ background: #00b894; color: white; }}
+        .bot-status.closed {{ background: #636e72; color: white; }}
         .bot-status.dead {{ background: #e94560; color: white; animation: blink 1s infinite; }}
         @keyframes blink {{ 50% {{ opacity: 0.5; }} }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>KODEX 200 자동매매 <span class="mode">실전</span> <span class="bot-status {'alive' if bot_alive else 'dead'}">{'봇 정상' if bot_alive else '봇 중단!'}</span></h1>
+        <h1>KODEX 200 자동매매 <span class="mode">실전</span> <span class="bot-status {bot_status}">{'봇 정상' if bot_status == 'alive' else '장 마감' if bot_status == 'closed' else '봇 중단!'}</span></h1>
         <div class="sub">마지막 업데이트: {latest.get("time", "-")} | 60초마다 자동 새로고침</div>
     </div>
 
