@@ -11,15 +11,15 @@ from auth import get_headers
 
 # === 종목 설정 ===
 STOCKS = [
-    {"code": "069500", "name": "KODEX 200", "daily_target": 5, "daily_target_high": 7, "sell_profit_rate": 15.0},
-    {"code": "482730", "name": "TIGER S&P500커버드콜", "daily_target": 5, "daily_target_high": 7, "sell_profit_rate": 15.0},
+    {"code": "069500", "name": "KODEX 200", "daily_target": 5, "daily_target_high": 7, "sell_profit_rate": 15.0, "slope_threshold": -0.05},
+    {"code": "482730", "name": "TIGER S&P500커버드콜", "daily_target": 5, "daily_target_high": 7, "sell_profit_rate": 15.0, "slope_threshold": -0.01},
 ]
 
 # === 공통 설정 ===
 CASH_THRESHOLD = 5000000       # 이 이상이면 매수 수량 증가
 PRICE_CHECK_INTERVAL = 5       # 가격 체크 간격 (분)
 SLOPE_WINDOW = 6               # 기울기 계산용 데이터 수 (6개 = 30분)
-SLOPE_THRESHOLD = -0.05        # 이 이하면 하락 추세로 판단 (%/분)
+SLOPE_THRESHOLD = -0.05        # 기본값 (종목별 slope_threshold로 오버라이드)
 SLOPE_BUY_COOLDOWN = 5         # 기울기 매수 후 최소 대기 시간 (분)
 LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
 
@@ -333,7 +333,8 @@ def try_buy_stock(code):
 
     slope_cooldown_ok = (st["last_slope_buy_time"] is None) or \
                         (n - st["last_slope_buy_time"]).total_seconds() / 60 >= SLOPE_BUY_COOLDOWN
-    if slope is not None and slope <= SLOPE_THRESHOLD and remaining > 0 and slope_cooldown_ok:
+    threshold = stock.get("slope_threshold", SLOPE_THRESHOLD)
+    if slope is not None and slope <= threshold and remaining > 0 and slope_cooldown_ok:
         print(f"[{now()}] [{stock['name']}] 하락 감지! 기울기 매수 1주")
         if do_buy(1, price, slope, "slope_buy", code):
             st["last_slope_buy_time"] = n
