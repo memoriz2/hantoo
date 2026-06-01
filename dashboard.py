@@ -11,8 +11,8 @@ LOG_FILE = os.path.join(os.path.dirname(__file__), "output.log")
 TRADE_LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
 
 DASHBOARD_STOCKS = [
-    {"code": "069500", "name": "KODEX 200", "color": "#00d2d3"},
-    {"code": "482730", "name": "TIGER S&P500커버드콜", "color": "#ffa502"},
+    {"code": "069500", "name": "KODEX 200", "color": "#00d2d3", "slope_threshold": -0.05},
+    {"code": "482730", "name": "TIGER S&P500커버드콜", "color": "#ffa502", "slope_threshold": -0.01},
 ]
 
 
@@ -285,7 +285,7 @@ def _render_dashboard():
                     fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2,
                 }}, {{
                     label: '매수 기준선',
-                    data: Array({len(slope_entries)}).fill(-0.05),
+                    data: Array({len(slope_entries)}).fill({s["slope_threshold"]}),
                     borderColor: '#e94560', borderDash: [5, 5], borderWidth: 1,
                     pointRadius: 0, fill: false,
                 }}]

@@ -10,16 +10,26 @@ from config import BASE_URL, ACCOUNT_NO, MODE
 from auth import get_headers
 
 # === 종목 설정 ===
+# buy_steps: (기울기 임계, 매수 수량) — 큰 하락(가장 음수)부터 차례로 매칭
 STOCKS = [
-    {"code": "069500", "name": "KODEX 200", "daily_target": 5, "daily_target_high": 7, "sell_profit_rate": 15.0, "slope_threshold": -0.05},
-    {"code": "482730", "name": "TIGER S&P500커버드콜", "daily_target": 5, "daily_target_high": 7, "sell_profit_rate": 15.0, "slope_threshold": -0.01},
+    {
+        "code": "069500", "name": "KODEX 200",
+        "daily_target": 30, "daily_target_high": 50,
+        "sell_profit_rate": 15.0,
+        "buy_steps": [(-0.30, 5), (-0.15, 3), (-0.05, 1)],
+    },
+    {
+        "code": "482730", "name": "TIGER S&P500커버드콜",
+        "daily_target": 50, "daily_target_high": 80,
+        "sell_profit_rate": 15.0,
+        "buy_steps": [(-0.10, 10), (-0.05, 5), (-0.01, 2)],
+    },
 ]
 
 # === 공통 설정 ===
 CASH_THRESHOLD = 5000000       # 이 이상이면 매수 수량 증가
 PRICE_CHECK_INTERVAL = 5       # 가격 체크 간격 (분)
 SLOPE_WINDOW = 6               # 기울기 계산용 데이터 수 (6개 = 30분)
-SLOPE_THRESHOLD = -0.05        # 기본값 (종목별 slope_threshold로 오버라이드)
 SLOPE_BUY_COOLDOWN = 5         # 기울기 매수 후 최소 대기 시간 (분)
 LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
 
@@ -217,6 +227,16 @@ def get_today_target(code):
     return target
 
 
+def get_buy_qty(stock, slope):
+    """기울기 강도에 따른 매수 수량 결정. 매칭되는 가장 큰 단계 적용."""
+    if slope is None:
+        return 0
+    for threshold, qty in stock["buy_steps"]:
+        if slope <= threshold:
+            return qty
+    return 0
+
+
 def calc_slope(code):
     """가격 기울기 계산 (%/분). None이면 데이터 부족."""
     ph = stock_state[code]["price_history"]
@@ -333,10 +353,11 @@ def try_buy_stock(code):
 
     slope_cooldown_ok = (st["last_slope_buy_time"] is None) or \
                         (n - st["last_slope_buy_time"]).total_seconds() / 60 >= SLOPE_BUY_COOLDOWN
-    threshold = stock.get("slope_threshold", SLOPE_THRESHOLD)
-    if slope is not None and slope <= threshold and remaining > 0 and slope_cooldown_ok:
-        print(f"[{now()}] [{stock['name']}] 하락 감지! 기울기 매수 1주")
-        if do_buy(1, price, slope, "slope_buy", code):
+    buy_qty = get_buy_qty(stock, slope)
+    if buy_qty > 0 and remaining > 0 and slope_cooldown_ok:
+        actual_qty = min(buy_qty, remaining)
+        print(f"[{now()}] [{stock['name']}] 하락 감지! 기울기 매수 {actual_qty}주 (slope {slope:+.4f})")
+        if do_buy(actual_qty, price, slope, "slope_buy", code):
             st["last_slope_buy_time"] = n
 
 
