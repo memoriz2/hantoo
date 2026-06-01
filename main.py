@@ -366,8 +366,6 @@ def check_sell_stock(code):
     stock = _get_stock(code)
     if not is_market_open():
         return
-    if sold_today(code):
-        return
 
     qty, avg_price, profit_rate = get_stock_holding(code)
     if qty == 0:
@@ -378,6 +376,9 @@ def check_sell_stock(code):
         return
 
     print(f"[{now()}] [{stock['name']}] [매도 모니터링] 보유: {qty}주 | 평단가: {avg_price:,.0f}원 | 현재가: {price:,}원 | 수익률: {profit_rate:+.2f}%")
+
+    if sold_today(code):
+        return
 
     if profit_rate >= stock["sell_profit_rate"]:
         sell_qty = qty // 2
