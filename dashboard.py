@@ -192,7 +192,10 @@ def _render_dashboard():
             t.get("qty", 0) for t in buys
             if t.get("time", "").startswith(today_str) and t.get("stock") == name
         )
-        today_target = latest.get("target", 5)
+        today_target = next(
+            (e["target"] for e in reversed(stock_entries) if "target" in e),
+            0,
+        )
 
         # 추세
         if collecting:
