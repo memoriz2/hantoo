@@ -67,6 +67,23 @@ def parse_monitor_log():
                     "bought": int(c.group(6)),
                     "target": int(c.group(7)),
                 })
+                continue
+            # 스마트매도 진단 로그
+            sm = re.search(
+                r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?:\[([^\]]+)\] )?\[스마트매도\] 수익률 ([+\-\d.]+)% \| 고점 ([+\-\d.]+)% \| 바닥\(래칫\) ([\d.]+)% \| 밴드 ([\d.]+)%p \| 발동선 ([\d.]+)% \| 기울기 ([^|]+?) \| 현금비율 (\d+)%',
+                line
+            )
+            if sm:
+                entries.append({
+                    "time": sm.group(1),
+                    "stock": sm.group(2) or "KODEX 200",
+                    "smart_profit": float(sm.group(3)),
+                    "peak": float(sm.group(4)),
+                    "floor": float(sm.group(5)),
+                    "band": float(sm.group(6)),
+                    "trigger": float(sm.group(7)),
+                    "cash_ratio": int(sm.group(9)),
+                })
     return entries
 
 
@@ -180,6 +197,8 @@ def _render_dashboard():
         price_entries = [e for e in stock_entries if "current_price" in e][-288:]
         slope_entries = [e for e in stock_entries if "slope" in e][-288:]
         monitor_entries = [e for e in stock_entries if "profit_rate" in e]
+        smart_entries = [e for e in stock_entries if "floor" in e]
+        smart = smart_entries[-1] if smart_entries else None
 
         current_price = latest.get("current_price", 0)
         profit_rate = monitor_entries[-1]["profit_rate"] if monitor_entries else 0
@@ -223,6 +242,36 @@ def _render_dashboard():
         slopes = json.dumps([e["slope"] for e in slope_entries])
 
         code = s["code"]
+
+        # 스마트 매도 패널 (스마트매도 종목만)
+        smart_html = ""
+        if smart:
+            if smart["peak"] < smart["floor"]:
+                status = f'📈 {smart["floor"]:.2f}% 도달 대기'
+                status_class = "neutral"
+            else:
+                status = f'🎯 {smart["trigger"]:.2f}%로 밀리면 매도'
+                status_class = "minus"
+            smart_html = f"""
+        <div class="cards">
+            <div class="card">
+                <div class="label">장중 고점</div>
+                <div class="value plus">{smart["peak"]:+.2f}%</div>
+            </div>
+            <div class="card">
+                <div class="label">바닥선 (래칫)</div>
+                <div class="value neutral">{smart["floor"]:.2f}%</div>
+            </div>
+            <div class="card">
+                <div class="label">발동선 (고점-밴드 {smart["band"]:.2f}%p)</div>
+                <div class="value neutral">{smart["trigger"]:.2f}%</div>
+            </div>
+            <div class="card">
+                <div class="label">매도 상태 (현금 {smart["cash_ratio"]}%)</div>
+                <div class="value {status_class}">{status}</div>
+            </div>
+        </div>"""
+
         stock_sections_html += f"""
     <div class="stock-section">
         <h2 class="stock-title">{name} <span class="stock-code">({code})</span></h2>
@@ -243,7 +292,7 @@ def _render_dashboard():
                 <div class="label">오늘 매수</div>
                 <div class="value neutral">{today_buys} / {today_target}주</div>
             </div>
-        </div>
+        </div>{smart_html}
         <div class="chart-container">
             <h3>가격 추이</h3>
             <canvas id="priceChart_{code}"></canvas>

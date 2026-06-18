@@ -16,6 +16,17 @@ STOCKS = [
         "code": "069500", "name": "KODEX 200",
         "daily_target": 30, "daily_target_high": 50,
         "sell_profit_rate": 15.0,
+        # 스마트 매도(트레일링+변동성밴드+예수금연동 래칫+기울기 급락). 없으면 즉시 절반매도.
+        "smart_sell": {
+            "margin_base": 1.0,        # 래칫 마진 기본(%p)
+            "margin_cash_slope": 4.0,  # 현금비율(0~1)당 추가 마진(%p) → 마진 = base + 현금비율×slope
+            "band_mult": 3.0,          # 변동성 밴드 배수
+            "band_min": 0.4,           # 밴드 하한(%p)
+            "band_max": 1.5,           # 밴드 상한(%p)
+            "slice_frac": 0.20,        # 한 슬라이스 = 남은 수량의 20%
+            "slice_min": 2,            # 최소 슬라이스 수량
+            "slope_panic": -0.05,      # 기울기 이 이하면 밴드 무시하고 급락 매도
+        },
         "buy_steps": [(-0.30, 5), (-0.15, 3), (-0.05, 1)],
     },
     {
@@ -252,6 +263,32 @@ def calc_slope(code):
     return slope
 
 
+def calc_volatility(code):
+    """최근 가격 변동성 (인터벌 수익률의 표준편차, %). None이면 데이터 부족."""
+    ph = stock_state[code]["price_history"]
+    if len(ph) < SLOPE_WINDOW:
+        return None
+    recent = ph[-SLOPE_WINDOW:]
+    rets = []
+    for i in range(1, len(recent)):
+        if recent[i - 1] == 0:
+            continue
+        rets.append((recent[i] - recent[i - 1]) / recent[i - 1] * 100)
+    if len(rets) < 2:
+        return None
+    return float(np.std(rets))
+
+
+def last_sell_profit(code):
+    """trade_log에서 가장 최근 매도의 수익률(%). 없으면 None."""
+    log = load_log()
+    stock = _get_stock(code)
+    for t in reversed(log["trades"]):
+        if t.get("type") == "sell" and (t.get("code") == code or t.get("stock") == stock["name"]):
+            return t.get("profit_rate")
+    return None
+
+
 def bought_today_count(code):
     """오늘 매수한 총 수량 (종목별)"""
     log = load_log()
@@ -361,6 +398,75 @@ def try_buy_stock(code):
             st["last_slope_buy_time"] = n
 
 
+def _record_sell(code, stock, sell_qty, price, profit_rate, avg_price):
+    """시장가 매도 실행 + 로그 기록. 성공 시 True."""
+    result = sell_stock(sell_qty, code)
+    if result["rt_cd"] != "0":
+        return False
+    log = load_log()
+    log["trades"].append({
+        "time": now(),
+        "type": "sell",
+        "stock": stock["name"],
+        "code": code,
+        "qty": sell_qty,
+        "price": price,
+        "profit_rate": round(profit_rate, 2),
+        "avg_price": avg_price,
+        "reason": "profit_sell",
+    })
+    save_log(log)
+    return True
+
+
+def check_sell_smart(code, stock, qty, avg_price, profit_rate, price, cfg):
+    """스마트 매도: 트레일링 + 변동성밴드 + 예수금연동 래칫 + 기울기 급락."""
+    st = stock_state[code]
+
+    # 장중 최고 수익률 갱신
+    if st.get("peak_profit") is None or profit_rate > st["peak_profit"]:
+        st["peak_profit"] = profit_rate
+    peak = st["peak_profit"]
+
+    base_floor = stock["sell_profit_rate"]
+
+    # 예수금 연동 마진 → 유효 바닥선(래칫)
+    cash = get_cash_balance()
+    pos_value = qty * price
+    cash_ratio = cash / (cash + pos_value) if (cash + pos_value) > 0 else 0.0
+    margin = cfg["margin_base"] + cash_ratio * cfg["margin_cash_slope"]
+    last_sell = last_sell_profit(code)
+    floor = base_floor if last_sell is None else max(base_floor, last_sell + margin)
+
+    # 변동성 밴드
+    vol = calc_volatility(code)
+    if vol is None:
+        band = cfg["band_max"]
+    else:
+        band = min(cfg["band_max"], max(cfg["band_min"], cfg["band_mult"] * vol))
+
+    sell_level = max(floor, peak - band)
+    slope = calc_slope(code)
+    panic = slope is not None and slope <= cfg["slope_panic"]
+    slope_str = "수집중" if slope is None else f"{slope:+.4f}"
+
+    print(f"[{now()}] [{stock['name']}] [스마트매도] 수익률 {profit_rate:+.2f}% | 고점 {peak:+.2f}% | 바닥(래칫) {floor:.2f}% | 밴드 {band:.2f}%p | 발동선 {sell_level:.2f}% | 기울기 {slope_str} | 현금비율 {cash_ratio*100:.0f}% (마진 {margin:.2f}%p)")
+
+    # 바닥선 위로 충분히 올라온 적이 있어야(peak>=floor) 매도 후보
+    if peak < floor or profit_rate < base_floor:
+        return
+
+    triggered = profit_rate <= sell_level or (panic and profit_rate >= floor)
+    if not triggered:
+        return
+
+    sell_qty = max(cfg["slice_min"], int(qty * cfg["slice_frac"]))
+    sell_qty = min(sell_qty, qty)
+    reason = "급락(기울기)" if panic and profit_rate > sell_level else "트레일링"
+    print(f"[{now()}] [{stock['name']}] 스마트 매도 발동({reason})! {sell_qty}주 (수익률 {profit_rate:.2f}%, 발동선 {sell_level:.2f}%)")
+    _record_sell(code, stock, sell_qty, price, profit_rate, avg_price)
+
+
 def check_sell_stock(code):
     """종목별 수익률 체크 후 매도"""
     stock = _get_stock(code)
@@ -375,31 +481,23 @@ def check_sell_stock(code):
     if price is None:
         return
 
+    # 대시보드가 파싱하는 모니터링 라인 (형식 유지 필수)
     print(f"[{now()}] [{stock['name']}] [매도 모니터링] 보유: {qty}주 | 평단가: {avg_price:,.0f}원 | 현재가: {price:,}원 | 수익률: {profit_rate:+.2f}%")
 
-    if sold_today(code):
+    cfg = stock.get("smart_sell")
+    if cfg:
+        check_sell_smart(code, stock, qty, avg_price, profit_rate, price, cfg)
         return
 
+    # 기존 즉시 절반 매도 (하루 1회)
+    if sold_today(code):
+        return
     if profit_rate >= stock["sell_profit_rate"]:
         sell_qty = qty // 2
         if sell_qty == 0:
             return
         print(f"[{now()}] [{stock['name']}] 수익률 {profit_rate:.2f}% >= {stock['sell_profit_rate']}%! {sell_qty}주 매도")
-        result = sell_stock(sell_qty, code)
-        if result["rt_cd"] == "0":
-            log = load_log()
-            log["trades"].append({
-                "time": now(),
-                "type": "sell",
-                "stock": stock["name"],
-                "code": code,
-                "qty": sell_qty,
-                "price": price,
-                "profit_rate": round(profit_rate, 2),
-                "avg_price": avg_price,
-                "reason": "profit_sell",
-            })
-            save_log(log)
+        _record_sell(code, stock, sell_qty, price, profit_rate, avg_price)
 
 
 def try_buy():
@@ -426,6 +524,7 @@ def reset_daily():
         st = stock_state[s["code"]]
         st["today_bought"] = 0
         st["last_slope_buy_time"] = None
+        st["peak_profit"] = None
     print(f"\n[{now()}] === 새로운 거래일 시작 ===")
 
 
@@ -436,6 +535,7 @@ if __name__ == "__main__":
             "price_history": [],
             "today_bought": 0,
             "last_slope_buy_time": None,
+            "peak_profit": None,
         }
 
     print("=" * 50)
@@ -443,9 +543,9 @@ if __name__ == "__main__":
     print("=" * 50)
     print(f"  모드: {'실전투자' if MODE == 'real' else '모의투자'}")
     for s in STOCKS:
-        print(f"  종목: {s['name']} ({s['code']}) — 목표 {s['daily_target']}주/일")
+        mode = "스마트(트레일링+래칫)" if s.get("smart_sell") else "즉시 절반"
+        print(f"  종목: {s['name']} ({s['code']}) — 목표 {s['daily_target']}주/일 · 매도 {mode}")
     print(f"  매수: 기울기 하락 감지 시 매수 (쿨다운 {SLOPE_BUY_COOLDOWN}분)")
-    print(f"  매도: 수익률 기준 이상 시 절반 매도")
     print(f"  체크 간격: {PRICE_CHECK_INTERVAL}분")
     print("=" * 50)
 
