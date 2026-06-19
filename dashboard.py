@@ -200,10 +200,17 @@ def _render_dashboard():
         smart_entries = [e for e in stock_entries if "floor" in e]
         smart = smart_entries[-1] if smart_entries else None
 
-        current_price = latest.get("current_price", 0)
+        # 현재가/기울기/수집상태는 해당 필드를 가진 최신 엔트리에서 가져온다
+        # (latest가 스마트매도 진단 로그처럼 해당 필드가 없는 엔트리일 수 있음)
+        current_price = price_entries[-1]["current_price"] if price_entries else 0
         profit_rate = monitor_entries[-1]["profit_rate"] if monitor_entries else 0
-        slope = latest.get("slope", None)
-        collecting = latest.get("collecting", None)
+        latest_trend = next(
+            (e for e in reversed(stock_entries)
+             if "slope" in e or "collecting" in e),
+            {},
+        )
+        slope = latest_trend.get("slope", None)
+        collecting = latest_trend.get("collecting", None)
 
         # 오늘 매수 수량
         today_str = date.today().isoformat()
