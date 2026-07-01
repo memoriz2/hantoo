@@ -43,6 +43,7 @@ PRICE_CHECK_INTERVAL = 5       # 가격 체크 간격 (분)
 SLOPE_WINDOW = 6               # 기울기 계산용 데이터 수 (6개 = 30분)
 SLOPE_BUY_COOLDOWN = 5         # 기울기 매수 후 최소 대기 시간 (분)
 LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
+ML_SHADOW_FILE = os.path.join(os.path.dirname(__file__), "ml_shadow.jsonl")
 
 # Per-stock state: {code: {"price_history": [], "today_bought": 0, "last_slope_buy_time": None}}
 stock_state = {}
@@ -50,6 +51,19 @@ stock_state = {}
 
 def _price_history_file(code):
     return os.path.join(os.path.dirname(__file__), f"price_history_{code}.json")
+
+
+def _price_archive_file(code):
+    return os.path.join(os.path.dirname(__file__), f"price_archive_{code}.jsonl")
+
+
+def append_price_archive(code, price):
+    """안 지우는 영구 아카이브에 가격 한 줄 추가 (데이터 수집용). 실패해도 봇은 계속."""
+    try:
+        with open(_price_archive_file(code), "a") as f:
+            f.write(json.dumps({"time": now(), "price": price}) + "\n")
+    except Exception as e:
+        print(f"[{now()}] 아카이브 저장 에러(무시): {e}")
 
 
 def _get_stock(code):
@@ -371,6 +385,7 @@ def try_buy_stock(code):
     if len(st["price_history"]) > 100:
         del st["price_history"][:len(st["price_history"]) - 100]
     save_price_history(code)
+    append_price_archive(code, price)   # 영구 아카이브(데이터 수집, 3일 제한 없음)
 
     st["today_bought"] = bought_today_count(code)
     target = get_today_target(code)
@@ -500,6 +515,36 @@ def check_sell_stock(code):
         _record_sell(code, stock, sell_qty, price, profit_rate, avg_price)
 
 
+def run_ml_shadow():
+    """[섀도우] ML 매수 예측을 기록만 함 (실제 주문 X). KODEX 200(069500)만.
+    실매매 로직과 완전히 분리 — 여기서 order 함수는 절대 호출하지 않음."""
+    if not is_market_open():
+        return
+    code = "069500"
+    try:
+        import ml_signal
+        result = ml_signal.predict_today(code)
+        if result is None:
+            print(f"[{now()}] [ML섀도우] 데이터 부족 — 건너뜀")
+            return
+        cash = get_cash_balance()
+        qty, _avg, _pr = get_stock_holding(code)
+        price = result["price"]
+        pos_value = qty * price
+        exposure = pos_value / (cash + pos_value) if (cash + pos_value) > 0 else 0.0
+        record = {
+            "time": now(), "code": code,
+            "prob": result["prob"], "signal": result["signal"],
+            "price": price, "cash": cash,
+            "holding_qty": qty, "exposure": round(exposure, 4),
+        }
+        with open(ML_SHADOW_FILE, "a") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        print(f"[{now()}] [ML섀도우] P={result['prob']} 신호={result['signal']} (기록만, 매매X)")
+    except Exception as e:
+        print(f"[{now()}] [ML섀도우] 에러(무시): {e}")
+
+
 def try_buy():
     """전 종목 매수 체크"""
     for s in STOCKS:
@@ -568,6 +613,9 @@ if __name__ == "__main__":
     schedule.every(PRICE_CHECK_INTERVAL).minutes.do(try_buy)
     schedule.every(PRICE_CHECK_INTERVAL).minutes.do(check_sell)
 
+    # [섀도우] 하루 1회 ML 예측 기록 (실제 매매 아님, 검증용)
+    schedule.every().day.at("09:10").do(run_ml_shadow)
+
     print(f"\n[{now()}] 스케줄러 시작 ({'실전' if MODE == 'real' else '모의'})")
     print(f"[{now()}] 종료하려면 Ctrl+C를 누르세요.\n")
 
@@ -577,6 +625,7 @@ if __name__ == "__main__":
             reset_daily()
             try_buy()
             check_sell()
+            run_ml_shadow()
         except Exception as e:
             print(f"[{now()}] 시작 시 에러 (무시하고 스케줄러 진입): {e}")
 

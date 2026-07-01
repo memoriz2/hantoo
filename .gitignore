@@ -5,3 +5,21 @@ __pycache__/
 .idea/
 venv/
 token.json
+.DS_Store
+
+# ML 학습/분석 (로컬 전용 — 서버 배포 안 함)
+export_model.py
+fetch_daily_kodex.py
+make_features.py
+train_model.py
+backtest.py
+kodex_daily.csv
+kodex_features.csv
+*.png
+interview_qa.md
+
+# 런타임 데이터 (서버에서 생성/보관, 커밋 금지 — git pull이 덮어쓰지 않게)
+price_history_*.json
+price_archive_*.jsonl
+trade_log.json
+ml_shadow.jsonl

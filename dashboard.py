@@ -9,6 +9,7 @@ app = Flask(__name__)
 
 LOG_FILE = os.path.join(os.path.dirname(__file__), "output.log")
 TRADE_LOG_FILE = os.path.join(os.path.dirname(__file__), "trade_log.json")
+ML_SHADOW_FILE = os.path.join(os.path.dirname(__file__), "ml_shadow.jsonl")
 
 DASHBOARD_STOCKS = [
     {"code": "069500", "name": "KODEX 200", "color": "#00d2d3", "slope_threshold": -0.05},
@@ -95,6 +96,73 @@ def load_trade_log():
             return json.load(f)
     except (json.JSONDecodeError, ValueError):
         return {"trades": []}
+
+
+def load_ml_shadow(limit=15):
+    """ml_shadow.jsonl(한 줄=한 예측)을 최근순으로 읽음."""
+    if not os.path.exists(ML_SHADOW_FILE):
+        return []
+    records = []
+    with open(ML_SHADOW_FILE, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return records[-limit:]
+
+
+def build_ml_panel():
+    """ML 섀도우 예측 패널 HTML. 기록만(실매매 아님)."""
+    records = load_ml_shadow()
+    if not records:
+        return ""
+    latest = records[-1]
+    sig_label = "매수 추천" if latest.get("signal") == "buy" else "관망"
+    sig_class = "plus" if latest.get("signal") == "buy" else "neutral"
+    rows = ""
+    for r in reversed(records):
+        sig = "매수" if r.get("signal") == "buy" else "관망"
+        sig_c = "buy" if r.get("signal") == "buy" else ""
+        exposure = r.get("exposure", 0) * 100
+        rows += (
+            f'<tr><td>{r.get("time", "-")[:16]}</td>'
+            f'<td>{r.get("prob", 0):.2f}</td>'
+            f'<td class="{sig_c}">{sig}</td>'
+            f'<td>{r.get("price", 0):,}원</td>'
+            f'<td>{exposure:.0f}%</td>'
+            f'<td style="color:#888">진행중</td></tr>'
+        )
+    return f"""
+    <div class="stock-section">
+        <h2 class="stock-title">🤖 ML 섀도우 예측 <span class="stock-code">(KODEX 200 · 기록만, 실매매 아님)</span></h2>
+        <div class="cards">
+            <div class="card">
+                <div class="label">오늘 신호</div>
+                <div class="value {sig_class}">{sig_label}</div>
+            </div>
+            <div class="card">
+                <div class="label">매수 확률 (P)</div>
+                <div class="value neutral">{latest.get("prob", 0):.2f}</div>
+            </div>
+            <div class="card">
+                <div class="label">노출도</div>
+                <div class="value neutral">{latest.get("exposure", 0) * 100:.0f}%</div>
+            </div>
+            <div class="card">
+                <div class="label">판정 기준</div>
+                <div class="value neutral">20일내 +5%</div>
+            </div>
+        </div>
+        <table>
+            <tr><th>시각</th><th>확률</th><th>신호</th><th>현재가</th><th>노출도</th><th>실제결과</th></tr>
+            {rows}
+        </table>
+        <div style="color:#888;font-size:12px;margin-top:8px;">※ '실제결과'는 예측 20일 경과 후 채점 예정 (섀도우 검증 단계)</div>
+    </div>"""
 
 
 def build_history_table(trades):
@@ -426,6 +494,8 @@ def _render_dashboard():
     </div>
 
     {stock_sections_html}
+
+    {build_ml_panel()}
 
     <h3 class="section-title">매매 히스토리 (최근 30건)</h3>
     <table>
